@@ -3,8 +3,9 @@ roboflow
 ipython
 streamlit
 glob2
-opencv-python-headless
+opencv-python-headless==4.8.1.78
 pillow
 numpy
 torch
+
 torchvision
