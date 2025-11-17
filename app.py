@@ -14,7 +14,7 @@ def load_model():
 
 
 def detect_image(image, model, original_filename="detected_image"):
-    results = model(image, conf=0.40)
+    results = model(image, conf=0.60)
     annotated_image = results[0].plot()
 
     # Convert back to RGB before saving to match original image colors
@@ -50,7 +50,7 @@ def detect_video(video_path, model):
         ret, frame = cap.read()
         if not ret:
             break
-        results = model(frame, conf=0.40)
+        results = model(frame, conf=0.60)
         annotated_frame = results[0].plot()
         out.write(annotated_frame)
 
@@ -102,4 +102,5 @@ elif input_type == "Video":
 
         st.success("Done! Here's the processed video:")
         st.video(output_video_path)
+
 
