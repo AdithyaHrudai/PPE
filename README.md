@@ -3,6 +3,9 @@ Try the web application using this link:
 <br>
 
 https://detect-ppe-online.streamlit.app/
-<img width="1889" height="974" alt="image" src="https://github.com/user-attachments/assets/00204a78-31ee-45d4-b917-919e9e00425a" />
-<img width="1899" height="935" alt="image" src="https://github.com/user-attachments/assets/9d8c08e0-5f2c-4a08-8940-7f63ba8457c7" />
+
+<img width="1271" height="710" alt="Screenshot 2025-11-17 180129" src="https://github.com/user-attachments/assets/b3a93d01-7622-470a-9cdb-f459b893bb86" />
+
+<img width="1281" height="717" alt="image" src="https://github.com/user-attachments/assets/69741f55-779f-4330-bbcd-a04f2798118a" />
+
 This web application can process both images and video formats
