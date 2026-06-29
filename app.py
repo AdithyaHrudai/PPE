@@ -177,9 +177,24 @@ if input_type == "Image":
             st.download_button("Download Detected Image", f, file_name=os.path.basename(image_output_path))
 
 elif input_type == "Video":
-    uploaded_video = st.sidebar.file_uploader("Upload a Video", type=["mp4", "mov", "avi"])
+    # NOTE: we deliberately do NOT pass `type=` here. Newer Streamlit versions
+    # validate the uploaded file's *browser-reported* MIME type against that
+    # list, and some browsers report a perfectly valid .mp4 with a type the
+    # dropzone then rejects ("video/mp4 files are not allowed"). Accepting any
+    # file and validating the extension ourselves makes MP4 uploads reliable.
+    ALLOWED_VIDEO_EXTS = (".mp4", ".mov", ".avi", ".mkv", ".m4v", ".mpeg", ".mpg")
+    uploaded_video = st.sidebar.file_uploader(
+        "Upload a Video", help="MP4, MOV, AVI, MKV, M4V, MPEG/MPG"
+    )
     frame_stride = st.sidebar.slider("Process every Nth frame (higher = faster)", 1, 10, 1)
     if uploaded_video:
+        ext = os.path.splitext(uploaded_video.name)[1].lower()
+        if ext not in ALLOWED_VIDEO_EXTS:
+            st.error(
+                f"Unsupported video type '{ext or 'unknown'}'. "
+                f"Please upload one of: {', '.join(ALLOWED_VIDEO_EXTS)}."
+            )
+            st.stop()
         st.video(uploaded_video)
 
         temp_input_path = None
