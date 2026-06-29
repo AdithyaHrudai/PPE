@@ -1,0 +1,16 @@
+# Runtime deps for the Streamlit app (deployment).
+# CPU-only torch: this index keeps pip from pulling the ~2GB CUDA build,
+# which is what breaks installs on Streamlit Community Cloud.
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+ultralytics>=8.3.0
+streamlit>=1.30
+opencv-python-headless>=4.8
+pillow
+pandas
+torch
+torchvision
+
+# NOTE: training-only packages (roboflow, ipython) are intentionally NOT here.
+# roboflow pulls non-headless opencv-python and conflicts with opencv-python-headless.
+# Install those in the Colab/Kaggle training notebook instead.

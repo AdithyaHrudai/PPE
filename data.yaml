@@ -1,0 +1,20 @@
+# Local PPE dataset config (Construction Site Safety, 10 classes).
+# The original ppe-dataset/.../ppe_data.yaml points to /kaggle/input paths that
+# do not exist on this machine — this file points at the local css-data splits.
+path: C:/Users/hruda/OneDrive/Desktop/adithya/PPE/ppe-dataset/css-data
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 10
+names:
+  0: Hardhat
+  1: Mask
+  2: NO-Hardhat
+  3: NO-Mask
+  4: NO-Safety Vest
+  5: Person
+  6: Safety Cone
+  7: Safety Vest
+  8: machinery
+  9: vehicle
