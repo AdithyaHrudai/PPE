@@ -144,6 +144,32 @@ class PPEDetector:
         self._apply_per_class_conf(result, base_conf)
         return result
 
+    def track(self, frame, conf: Optional[float] = None, iou: Optional[float] = None,
+              tracker: str = "bytetrack.yaml"):
+        """Run detection with ByteTrack multi-object tracking so detections
+        keep a persistent ID across video frames. Applies the same per-class
+        confidence filtering as ``predict`` (box slicing preserves track IDs)."""
+        base_conf = self.conf if conf is None else conf
+        base_iou = self.iou if iou is None else iou
+        floor_conf = min([base_conf, *self.per_class_conf.values()]) if self.per_class_conf else base_conf
+
+        results = self.model.track(
+            frame,
+            conf=float(floor_conf),
+            iou=float(base_iou),
+            persist=True,
+            tracker=tracker,
+            verbose=False,
+        )
+        result = results[0]
+        self._apply_per_class_conf(result, base_conf)
+        return result
+
+    def reset_tracker(self):
+        """Drop tracker state so the next ``track`` call starts fresh IDs.
+        Call once at the start of each new video."""
+        self.model.predictor = None
+
     def _apply_per_class_conf(self, result, base_conf: float):
         """Drop boxes whose confidence is below their class-specific threshold."""
         boxes = result.boxes
