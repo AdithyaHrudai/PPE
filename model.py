@@ -69,10 +69,24 @@ HELMET_CLASS_NAMES = ("Helmet", "Hardhat")
 DEFAULT_CONF = 0.35
 DEFAULT_IOU = 0.5
 
+# Inference resolution. 640 matches training; 1280 ("high accuracy") markedly
+# improves recall on small/partial objects — glasses, sideways helmets,
+# distant workers — at ~3-4x the inference cost.
+DEFAULT_IMGSZ = 640
+HIGH_ACCURACY_IMGSZ = 1280
+
 # Strict default confidence for the helmet class — this is the main lever that
 # suppresses "hair detected as helmet" false positives, which tend to be
 # low-confidence. Tune from the Streamlit sidebar.
 HELMET_CONF = 0.55
+
+# Stricter floor for vests: shirts/jackets in vest-like colours produce
+# mid-confidence Vest detections; genuine vests are usually >= 0.5.
+VEST_CONF = 0.50
+
+# Permissive floor for glasses: they are tiny objects and genuine detections
+# often score 0.25-0.4, below the global default.
+GLASS_CONF = 0.25
 
 # Per-class minimum confidence. Keyed by name; classes not listed use the
 # global threshold. "NO-Hardhat" (bare head) is only present in css-data models.
@@ -80,6 +94,9 @@ PER_CLASS_CONF: Dict[str, float] = {
     "Helmet": HELMET_CONF,
     "Hardhat": HELMET_CONF,
     "NO-Hardhat": 0.45,
+    "Vest": VEST_CONF,
+    "Safety Vest": VEST_CONF,
+    "Glass": GLASS_CONF,
 }
 
 
@@ -121,12 +138,15 @@ class PPEDetector:
         self.per_class_conf = dict(PER_CLASS_CONF if per_class_conf is None else per_class_conf)
 
     # -- core inference --------------------------------------------------
-    def predict(self, source, conf: Optional[float] = None, iou: Optional[float] = None):
+    def predict(self, source, conf: Optional[float] = None, iou: Optional[float] = None,
+                imgsz: int = DEFAULT_IMGSZ, augment: bool = False):
         """Run detection and return a single Ultralytics Results object with
         per-class confidence filtering already applied.
 
         We run inference at the *lowest* threshold among the global and
         per-class values, then filter in post so each class keeps its own bar.
+        ``imgsz``/``augment`` (test-time augmentation) trade speed for recall
+        on small or partially visible objects.
         """
         base_conf = self.conf if conf is None else conf
         base_iou = self.iou if iou is None else iou
@@ -138,6 +158,8 @@ class PPEDetector:
             source,
             conf=float(floor_conf),
             iou=float(base_iou),
+            imgsz=int(imgsz),
+            augment=bool(augment),
             verbose=False,
         )
         result = results[0]
@@ -145,7 +167,7 @@ class PPEDetector:
         return result
 
     def track(self, frame, conf: Optional[float] = None, iou: Optional[float] = None,
-              tracker: str = "bytetrack.yaml"):
+              imgsz: int = DEFAULT_IMGSZ, tracker: str = "bytetrack.yaml"):
         """Run detection with ByteTrack multi-object tracking so detections
         keep a persistent ID across video frames. Applies the same per-class
         confidence filtering as ``predict`` (box slicing preserves track IDs)."""
@@ -157,6 +179,7 @@ class PPEDetector:
             frame,
             conf=float(floor_conf),
             iou=float(base_iou),
+            imgsz=int(imgsz),
             persist=True,
             tracker=tracker,
             verbose=False,

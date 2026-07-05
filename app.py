@@ -24,11 +24,14 @@ from PIL import Image
 import compliance
 from model import (
     DEFAULT_CONF,
+    DEFAULT_IMGSZ,
     DEFAULT_IOU,
     HELMET_CLASS_NAMES,
     HELMET_CONF,
+    HIGH_ACCURACY_IMGSZ,
     PER_CLASS_CONF,
     PPEDetector,
+    VEST_CONF,
 )
 
 st.set_page_config(
@@ -63,19 +66,21 @@ def load_detector():
     return PPEDetector()
 
 
-def _helmet_overrides(hardhat_conf):
-    """Apply the chosen helmet confidence to whichever helmet class name the
-    loaded model uses (Helmet / Hardhat), keeping other per-class defaults."""
+def _threshold_overrides(hardhat_conf, vest_conf):
+    """Apply the chosen helmet/vest confidences to whichever class names the
+    loaded model uses, keeping other per-class defaults."""
     overrides = dict(PER_CLASS_CONF)
     for name in HELMET_CLASS_NAMES:
         overrides[name] = hardhat_conf
+    for name in ("Vest", "Safety Vest"):
+        overrides[name] = vest_conf
     return overrides
 
 
-def analyze_image(pil_image, detector, conf, iou, required_ppe):
+def analyze_image(pil_image, detector, conf, iou, required_ppe, imgsz, augment):
     """Detect, evaluate compliance and annotate. Returns (annotated RGB,
     workers, detections)."""
-    result = detector.predict(pil_image, conf=conf, iou=iou)
+    result = detector.predict(pil_image, conf=conf, iou=iou, imgsz=imgsz, augment=augment)
     workers, items = compliance.analyze(result, detector.names, required_ppe)
     bgr = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
     annotated_bgr = compliance.annotate(bgr, workers, items)
@@ -113,7 +118,7 @@ def _reencode_h264(src_path):
         return src_path
 
 
-def process_video(video_path, detector, conf, iou, required_ppe, frame_stride, use_tracking):
+def process_video(video_path, detector, conf, iou, required_ppe, frame_stride, use_tracking, imgsz):
     """Run detection (+tracking) over a video, writing an annotated copy and
     collecting per-frame compliance statistics."""
     if use_tracking:
@@ -153,9 +158,9 @@ def process_video(video_path, detector, conf, iou, required_ppe, frame_stride, u
                 break
             if frame_idx % frame_stride == 0:
                 if use_tracking:
-                    result = detector.track(frame, conf=conf, iou=iou)
+                    result = detector.track(frame, conf=conf, iou=iou, imgsz=imgsz)
                 else:
-                    result = detector.predict(frame, conf=conf, iou=iou)
+                    result = detector.predict(frame, conf=conf, iou=iou, imgsz=imgsz)
                 workers, items = compliance.analyze(result, detector.names, required_ppe)
                 out.write(compliance.annotate(frame, workers, items))
 
@@ -206,10 +211,12 @@ def process_video(video_path, detector, conf, iou, required_ppe, frame_stride, u
     }
 
 
-def render_image_results(pil_image, detector, conf, iou, required_ppe, source_name):
+def render_image_results(pil_image, detector, conf, iou, required_ppe, source_name, imgsz, augment):
     """Shared renderer for the image-upload and camera tabs."""
     try:
-        annotated, workers, items = analyze_image(pil_image, detector, conf, iou, required_ppe)
+        annotated, workers, items = analyze_image(
+            pil_image, detector, conf, iou, required_ppe, imgsz, augment
+        )
     except Exception as e:  # noqa: BLE001 - surface any inference error to the user
         st.error(f"Detection failed: {e}")
         return
@@ -218,7 +225,7 @@ def render_image_results(pil_image, detector, conf, iou, required_ppe, source_na
     with col1:
         st.image(pil_image, caption="Original", use_container_width=True)
     with col2:
-        st.image(annotated, caption="Analyzed — green: compliant · red: PPE missing · amber: equipment",
+        st.image(annotated, caption="Analyzed — green: compliant, red: PPE missing, amber: detected equipment",
                  use_container_width=True)
 
     compliant = sum(w.compliant for w in workers)
@@ -233,7 +240,7 @@ def render_image_results(pil_image, detector, conf, iou, required_ppe, source_na
         for i, w in enumerate(workers, start=1):
             row = {"Worker": w.label if w.track_id is not None else f"Worker {i}"}
             for r in required_ppe:
-                row[r] = "✅" if w.required[r] else "❌"
+                row[r] = "✓" if w.required[r] else "✗"
             row["Status"] = "Compliant" if w.compliant else f"Missing: {', '.join(w.missing)}"
             rows.append(row)
         st.subheader("Per-worker compliance")
@@ -252,7 +259,7 @@ def render_image_results(pil_image, detector, conf, iou, required_ppe, source_na
     ok, buf = cv2.imencode(".jpg", cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR))
     if ok:
         st.download_button(
-            "⬇️ Download analyzed image",
+            "Download analyzed image",
             io.BytesIO(buf.tobytes()),
             file_name=f"{source_name}_analyzed.jpg",
             mime="image/jpeg",
@@ -260,7 +267,7 @@ def render_image_results(pil_image, detector, conf, iou, required_ppe, source_na
 
 
 # ----------------------------- header -----------------------------
-st.title("🦺 PPE Detection & Safety Compliance")
+st.title("PPE Detection & Safety Compliance")
 st.caption(
     "Detects protective equipment on site imagery and evaluates per-worker compliance. "
     "YOLO11 · PyTorch · OpenCV · ByteTrack multi-object tracking"
@@ -288,13 +295,34 @@ required_ppe = st.sidebar.multiselect(
     help="Each detected worker is checked for these items. Workers missing any of them are flagged red.",
 )
 
+quality = st.sidebar.radio(
+    "Analysis quality",
+    ["Standard", "High accuracy"],
+    help="High accuracy runs inference at 1280 px (plus test-time augmentation on images) — "
+         "substantially better at small or partially visible objects such as glasses and "
+         "sideways helmets, at roughly 3-4x the processing time.",
+)
+imgsz = HIGH_ACCURACY_IMGSZ if quality == "High accuracy" else DEFAULT_IMGSZ
+use_tta = quality == "High accuracy"
+
 with st.sidebar.expander("Detection thresholds"):
-    conf = st.slider("Confidence threshold", 0.05, 0.95, DEFAULT_CONF, 0.05)
-    iou = st.slider("IoU (NMS) threshold", 0.1, 0.95, DEFAULT_IOU, 0.05)
+    conf = st.slider(
+        "Confidence threshold", 0.05, 0.95, DEFAULT_CONF, 0.05,
+        help="Global floor for all classes. Lower it if objects are missed; raise it if you see spurious boxes.",
+    )
+    iou = st.slider(
+        "IoU (NMS) threshold", 0.1, 0.95, DEFAULT_IOU, 0.05,
+        help="Lower it if the same object gets duplicate boxes; raise it if overlapping workers merge into one box.",
+    )
     hardhat_conf = st.slider(
         "Helmet confidence", 0.05, 0.95, HELMET_CONF, 0.05,
-        help="Stricter threshold for the helmet class suppresses hair-as-helmet false positives.",
+        help="Raise to suppress hair-as-helmet false positives; lower (with High accuracy) if genuine helmets are missed.",
     )
+    vest_conf = st.slider(
+        "Vest confidence", 0.05, 0.95, VEST_CONF, 0.05,
+        help="Raise to stop shirts/jackets being detected as safety vests; lower if genuine vests are missed.",
+    )
+    st.caption("See the About tab for the full threshold tuning guide.")
 
 with st.sidebar.expander("Video options"):
     use_tracking = st.toggle(
@@ -312,11 +340,11 @@ st.sidebar.caption(
     f"**Classes:** {', '.join(detector.names.values())}"
 )
 
-detector.per_class_conf = _helmet_overrides(hardhat_conf)
+detector.per_class_conf = _threshold_overrides(hardhat_conf, vest_conf)
 
 # ----------------------------- tabs -----------------------------
 tab_image, tab_video, tab_camera, tab_about = st.tabs(
-    ["🖼️ Image Analysis", "🎬 Video Analysis", "📷 Live Capture", "ℹ️ About"]
+    ["Image Analysis", "Video Analysis", "Live Capture", "About"]
 )
 
 with tab_image:
@@ -326,6 +354,7 @@ with tab_image:
         render_image_results(
             image, detector, conf, iou, required_ppe,
             source_name=os.path.splitext(uploaded_image.name)[0],
+            imgsz=imgsz, augment=use_tta,
         )
     else:
         st.info("Upload a JPG or PNG image of a work site to run PPE detection and compliance analysis.")
@@ -353,7 +382,7 @@ with tab_video:
                 st.session_state["video_name"] = uploaded_video.name
 
             st.video(uploaded_video)
-            if st.button("▶️ Analyze video", type="primary"):
+            if st.button("Analyze video", type="primary"):
                 temp_input_path = None
                 try:
                     # Write to a temp file and CLOSE it before OpenCV reads it
@@ -363,7 +392,7 @@ with tab_video:
                         temp_input_path = temp_input.name
                     st.session_state["video_result"] = process_video(
                         temp_input_path, detector, conf, iou, required_ppe,
-                        frame_stride, use_tracking,
+                        frame_stride, use_tracking, imgsz,
                     )
                 except Exception as e:  # noqa: BLE001
                     st.error(f"Video processing failed: {e}")
@@ -391,7 +420,7 @@ with tab_video:
                 st.video(result["output_path"])
                 with open(result["output_path"], "rb") as f:
                     st.download_button(
-                        "⬇️ Download analyzed video", f,
+                        "Download analyzed video", f,
                         file_name=os.path.basename(result["output_path"]),
                     )
 
@@ -405,7 +434,7 @@ with tab_video:
                     st.subheader("Violation report")
                     st.dataframe(result["violations"], use_container_width=True, hide_index=True)
                     st.download_button(
-                        "⬇️ Download violation report (CSV)",
+                        "Download violation report (CSV)",
                         result["violations"].to_csv(index=False).encode(),
                         file_name="ppe_violation_report.csv",
                         mime="text/csv",
@@ -423,7 +452,8 @@ with tab_camera:
     snapshot = st.camera_input("Take a photo")
     if snapshot:
         image = Image.open(snapshot).convert("RGB")
-        render_image_results(image, detector, conf, iou, required_ppe, source_name="camera_capture")
+        render_image_results(image, detector, conf, iou, required_ppe,
+                             source_name="camera_capture", imgsz=imgsz, augment=use_tta)
 
 with tab_about:
     st.markdown(
@@ -462,6 +492,26 @@ that names the worker and the missing equipment.
 (augmentation for lighting/scale/viewpoint variation, cosine LR schedule,
 early stopping) lives in `train.py` / `train_colab.ipynb`; `evaluate.py`
 reproduces these metrics.*
+
+### Threshold tuning guide
+
+| Symptom | Adjustment |
+|---|---|
+| Objects clearly present but not detected | Switch **Analysis quality** to *High accuracy*; if still missed, lower **Confidence threshold** to 0.20–0.30 |
+| Glasses / small items missed | *High accuracy* mode — small objects need the higher inference resolution far more than a lower threshold |
+| Helmets missed at odd angles (sideways, partial) | *High accuracy* mode first; then lower **Helmet confidence** to 0.40–0.45 |
+| Hair or bare heads detected as helmets | Raise **Helmet confidence** to 0.60–0.70 |
+| Shirts / jackets detected as safety vests | Raise **Vest confidence** to 0.55–0.65 |
+| Genuine vests flagged as missing | Lower **Vest confidence** to 0.35–0.45 |
+| Same object gets two overlapping boxes | Lower **IoU threshold** to 0.3–0.4 |
+| Two workers standing close merge into one box | Raise **IoU threshold** to 0.6–0.7 |
+| Random boxes on background clutter | Raise **Confidence threshold** to 0.45–0.55 |
+
+General principle: **confidence** trades missed detections (false negatives) against
+spurious ones (false positives); **resolution** governs small-object recall; **IoU**
+controls how aggressively overlapping boxes are merged. Threshold tuning cannot fix a
+domain gap — animated/CGI footage, thermal imagery or unusual camera angles need
+retraining on matching data (see `train.py`).
 
 ### Tech stack
 

@@ -21,8 +21,13 @@ with Python, PyTorch, Ultralytics YOLO11, OpenCV and Streamlit.
 - **Video analytics with tracking** — ByteTrack assigns persistent worker IDs across
   frames, producing unique-worker counts, a per-second compliance timeline and a
   downloadable **violation report (CSV)**.
-- **Class-aware confidence thresholds** — the helmet class runs at a stricter confidence
-  floor than other classes, suppressing hair-as-helmet false positives *without retraining*.
+- **Class-aware confidence thresholds** — helmet and vest classes run at stricter
+  confidence floors (suppressing hair-as-helmet and shirt-as-vest false positives),
+  while the small glasses class runs at a permissive floor — all *without retraining*
+  and tunable live from the sidebar. See [TUNING_GUIDE.md](TUNING_GUIDE.md).
+- **High-accuracy mode** — 1280 px inference with test-time augmentation, substantially
+  improving recall on small and partially visible objects (glasses, sideways helmets,
+  distant workers) at ~3-4x the processing time.
 - **Live capture** — analyze a webcam snapshot for on-the-spot compliance checks.
 
 ## Architecture
